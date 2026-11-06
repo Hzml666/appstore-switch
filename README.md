@@ -1,11 +1,11 @@
 # sswitch
 
-Switch the macOS App Store account from the terminal — one command, ~8 seconds, no window of its own.
+命令行一键切换 macOS 的 App Store 账号 —— 一条命令，8 秒左右，不弹窗口。
 
-macOS only lets the App Store be signed in to **one** Apple ID at a time. If you juggle a
-region-specific account (US / HK / JP…) with your main one, the built-in flow is
-*click avatar → sign out → scroll to the bottom → sign in → retype everything*.
-`sswitch` does all of that for you and gets out of the way.
+macOS 的 App Store 同一时间只能登一个 Apple 账号。如果你有一个港区/美区/日区账号要跟主账号来回切，
+原生流程是「点头像 → 退出登录 → 滚到最底 → 登录 → 重输账号密码 → 等双重认证」，两分钟起步，一天来回三次就是六分钟。
+
+`sswitch` 把这串动作全接管了，跑完还把焦点还给你原来的窗口。
 
 ```console
 $ sswitch hk
@@ -15,114 +15,90 @@ $ sswitch cn
 completed: main@example.com  # 9.1s
 ```
 
-## Install
+## 安装
 
 ```console
 $ git clone https://github.com/Hzml666/appstore-switch.git
 $ cd appstore-switch
-$ make install          # builds with swiftc and copies to /usr/local/bin
+$ make install          # swiftc 编译后装到 /usr/local/bin
 ```
 
-Requirements: macOS 13 or newer, Xcode Command Line Tools (`swiftc`).
+要求：macOS 13 或更新，已装 Xcode Command Line Tools（需要 `swiftc`）。
+也可以直接下 [Release](https://github.com/Hzml666/appstore-switch/releases) 里的通用二进制丢进 `/usr/local/bin`。
 
-## Use
+## 用法
 
 ```console
-$ sswitch add hk  you@example.com      # prompts for the password, stores it in the keychain
+$ sswitch add hk  you@example.com      # 交互输入密码，存进钥匙串
 $ sswitch add cn  main@example.com
 $ sswitch list
 hk      you@example.com
 cn      main@example.com
 
-$ sswitch hk                           # switch
+$ sswitch hk                           # 切过去
 $ sswitch cn
-$ sswitch rm hk                        # forget an account
+$ sswitch rm hk                        # 删掉一个
 ```
 
-Credentials live in the login keychain under the service `appstoreswitch.cli` as a single
-JSON item per account. Nothing is written to disk in plain text, nothing is sent anywhere.
+凭据存在登录钥匙串里，service 名 `appstoreswitch.cli`，一个账号一条 JSON。不落盘明文，不上传任何地方。
 
-### Trigger it from a hotkey
+### 绑个快捷键
 
-Shortcuts.app → new shortcut → **Run Shell Script** → `/usr/local/bin/sswitch hk`
-→ assign a keyboard shortcut (e.g. ⌃⌥H). Do the same for the other account.
+打开「快捷指令」→ 新建 → 添加「运行 Shell 脚本」→ 填 `/usr/local/bin/sswitch hk` → 设个快捷键（比如 ⌃⌥H）。
+另一个账号照做一遍。以后切账号就是按两下键盘。
 
-### Exit codes
+### 退出码
 
-| code | meaning |
+| 码 | 含义 |
 | --- | --- |
-| 0 | switched |
-| 2 | bad usage / unknown account |
-| 3 | switch attempted but Apple rejected it, timed out, or needs a manual step |
+| 0 | 切换成功 |
+| 2 | 用法错误 / 账号不存在 |
+| 3 | 尝试了但 Apple 拒绝、超时，或需要你手动完成某一步 |
 
-Every run writes a line-by-line trace to `~/Library/Logs/sswitch.log`.
+每次运行都会往 `~/Library/Logs/sswitch.log` 写逐行日志。
 
-## Permissions
+## 权限
 
-First run asks for two grants; both are one-time:
+首次运行会要两个授权，都是一次性的：
 
-1. **Accessibility** — needed to read and drive the App Store window.
-2. **Automation → System Events** — used for exactly one thing: typing the password.
-   macOS enables *Secure Input* while a password field has focus, and that mode silently
-   drops synthetic `CGEvent` keyboard events from any third-party process. `System Events`
-   keystrokes are the only mechanism that still reaches the field. Everything else
-   (menus, buttons, text fields) is driven directly through the Accessibility API.
+1. **辅助功能** —— 用来读取和操作 App Store 窗口。
+2. **自动化 → System Events** —— 只干一件事：往密码框里打字。
+   macOS 在密码框获得焦点时会进入 Secure Input，这个模式下第三方进程合成的键盘事件会被系统直接丢弃。
+   System Events 的 `keystroke` 是唯一还能送进去的通道。其余动作（菜单、按钮、文本框）全部走辅助功能 API，不经过它。
 
-If the grant is missing, the switch fails cleanly with `password field not found` or a
-rejected sign-in; System Settings → Privacy & Security will list `sswitch` (or the app that
-launched it) so you can enable it.
+如果权限没给，切换会干净地失败（报「找不到密码框」或「登录被拒」）。
+去「系统设置 → 隐私与安全性」里能看到 `sswitch`（或启动它的那个 App），勾上就行。
 
-## Why this is more involved than it looks
+## 为什么要写这么多代码
 
-Notes from building it, in case you are writing something similar:
+做这个东西踩的坑，给后面写同类工具的人省点时间：
 
-- **The account button has no accessibility actions.** `AppStore.accountButton` reports an
-  empty `AXActionNames` list, so `AXPress` does nothing. Sign-in has to go through the
-  `商店` / `Store` menu; sign-out lives in the popover behind a real mouse click.
-- **The sign-in sheet is nested.** `window → AXSheet → AXSheet → AXScrollArea → AXTextField`.
-  Querying `text fields of sheet 1 of window 1` returns nothing — you have to walk
-  `entire contents` (or the AX children tree) instead.
-- **The UI language follows the store region.** After signing in to an HK account the
-  whole App Store turns Traditional Chinese (`登入` / `登出`), so every label match has to
-  accept Simplified, Traditional, and English, and `退出登录` must be tested before `登录`
-  (it contains it).
-- **Autocomplete rewrites the Apple ID.** Pasting or typing an address that resembles a
-  previously used one gets silently "corrected" (`…@163.com` → `…@qq.com`), and Apple then
-  answers with a useless *"unknown error"*. Writing the value through `AXValue` and reading
-  it back is the reliable path.
-- **Pressing Return does not always submit.** If the field is not focused, Return submits
-  the stale editor contents. Click the sheet's primary button instead.
-- **Secure Input**, as described above — `AXValue` writes to `AXSecureTextField` are ignored
-  too, so keystrokes are the only option.
+- **账户按钮没有辅助功能动作。** `AppStore.accountButton` 的 `AXActionNames` 是空的，`AXPress` 调了没反应。
+  登录只能从菜单栏「商店 → 登录」走；退出登录则藏在这个按钮弹出的面板里，必须真实鼠标点击才触发。
+- **登录表单是嵌套的。** 结构是 `window → AXSheet → AXSheet → AXScrollArea → AXTextField`。
+  用 `text fields of sheet 1 of window 1` 这种查法永远返回 0，必须遍历整棵控件树。
+- **界面语言跟着商店区域变。** 登进港区账号后整个 App Store 变繁体（`登入` / `登出`），
+  所以每个 label 都要兼容简体、繁体、英文三种，而且 `退出登录` 必须先于 `登录` 判断（它包含后者）。
+- **自动补全会改写邮箱。** 粘贴或键入一个跟历史账号相似的地址，会被悄悄「纠正」（`@163.com` → `@qq.com`），
+  然后 Apple 回你一句毫无信息量的「发生未知错误」。可靠做法是把值写进 `AXValue` 再读回来校验。
+- **按回车不一定提交。** 焦点不在字段上时，回车提交的是编辑器里的旧内容。得去点弹窗的主按钮。
+- **Secure Input**，如上。`AXValue` 写入 `AXSecureTextField` 同样无效，只剩打字这条路。
 
-## Limitations
+## 已知限制
 
-- Two-factor authentication still needs you: the tool leaves the sheet open and waits up to
-  two minutes for the 6-digit code, then reports the outcome.
-- A brand-new device may show a terms/verification page; that also needs one manual click.
-- Apple throttles repeated sign-ins. Ten switches in a minute can start failing for a while.
-- Only the **App Store** account is switched. Your iCloud account is untouched.
+- 双重认证需要你自己输：工具会把弹窗留着等你，最多两分钟，然后报告结果。
+- 新设备首次登录可能出现条款/验证页，那一下要手动点。
+- Apple 有限流。一分钟内连切十次会开始失败一段时间。
+- **只切 App Store 账号**，不碰你的 iCloud 账号。
 
-## 中文说明
+## English
 
-macOS 的 App Store 同一时间只能登一个 Apple 账号。港区/美区账号和主账号来回切很烦，
-`sswitch` 把「退出 → 重新登录 → 填账号密码」这一串动作压缩成一条命令，8 秒左右完成，
-全程不弹自己的窗口，跑完把焦点还给你原来的应用。
-
-```console
-make install
-sswitch add hk 你的港区账号
-sswitch add cn 你的大陆账号
-sswitch hk      # 切港区
-sswitch cn      # 切大陆
-```
-
-首次运行需要给「辅助功能」权限（控制 App Store 窗口）和「自动化 → System Events」权限
-（只用来往密码框里打字，因为 macOS 的安全输入会丢弃其它进程合成的键盘事件）。
-
-双重认证需要你自己输 6 位验证码，窗口会留给你最多两分钟。这个工具只切 App Store 账号，
-不动你的 iCloud。
+`sswitch` switches the macOS App Store account from the terminal: one command, ~8 seconds,
+no window of its own, focus restored afterwards. Credentials live in the login keychain.
+Install with `make install`, then `sswitch add hk you@example.com` and `sswitch hk`.
+Requires Accessibility, plus a one-time Automation grant for System Events (the only way to
+type into a Secure Input password field). MIT licensed.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT —— 见 [LICENSE](LICENSE)。
