@@ -18,7 +18,7 @@ completed: main@example.com  # 9.1s
 ## Install
 
 ```console
-$ git clone https://github.com/<you>/appstore-switch.git
+$ git clone https://github.com/Hzml666/appstore-switch.git
 $ cd appstore-switch
 $ make install          # builds with swiftc and copies to /usr/local/bin
 ```
